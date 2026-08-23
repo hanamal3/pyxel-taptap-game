@@ -1,0 +1,28 @@
+# pyxel-skill .gitignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+.claude/
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Test / scratch
+*.log
+/tmp/
+
+# Local agent scratch; ignored so it never becomes public skill content.
+.superpowers/
+superpowers/
+docs/superpowers/
