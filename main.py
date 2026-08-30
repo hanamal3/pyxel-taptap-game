@@ -14,7 +14,7 @@
 
 import math
 import random
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, List, Optional
 
 # Pyxel がインストールされていない（または型情報が解決できない）場合の簡易スタブ
 try:
@@ -119,13 +119,7 @@ class TapTapGame:
         pyxel.mouse(True)  # マウス座標を有効化（タッチの座標も扱える）
 
         # りんご・バナナのピクセルアート（イメージバンク0）を読み込む
-        self.sprites_loaded = False
-        try:
-            pyxel.load("fruits.pyxres")
-            self.sprites_loaded = True
-        except Exception:
-            # 読み込めない場合は他の果物と同様に矩形パターンで代替描画する
-            pass
+        pyxel.load("fruits.pyxres")
 
         # サウンド定義（環境差を考えて複数パターンで試行）
         # Pyxel のバージョン差による引数違いに対応するため try/except を使います。
@@ -178,30 +172,6 @@ class TapTapGame:
             ("バナナ", "banana", 8, 7),
         ]
         self.target_type: Optional[Tuple[str, str, int, int]] = None
-        # ピクセルアート用のパターン定義（小さなマップで描画）
-        # '.' は透過、'B' は本体、 'L' は葉/ハイライト
-        self.pixel_patterns = {
-            "apple": [
-                "..LL....",
-                ".LLLL...",
-                ".BBBBB..",
-                ".BBBBB..",
-                ".BBBBB..",
-                "..BBB...",
-                "...B....",
-                "........",
-            ],
-            "banana": [
-                "........",
-                "..BBBBB.",
-                ".BBBBBB.",
-                ".BBBBB..",
-                "..BBBB..",
-                "...BB...",
-                "........",
-                "........",
-            ],
-        }
 
         # 難易度やボーナス系
         self.spawn_interval = 60  # 毎何フレームで自動でターゲットを再配置するか
@@ -372,48 +342,22 @@ class TapTapGame:
         # 背景は落ち着いた単色にする（シンプル）
         pyxel.cls(1)
 
-        # 果物を描く（ピクセルアートパターンを使う）
+        # 果物を描く（fruits.pyxres の実写ピクセルアート）
         if self.target_type is None:
             self.target_type = random.choice(self.fruit_types)
 
-        name, tid, body_col, leaf_col = self.target_type
-
-        # ピクセルアート描画ヘルパー
-        def draw_pixel_art(cx: int, cy: int, pattern: List[str], scale: int, color_map: Dict[str, int]) -> None:
-            h = len(pattern)
-            w = len(pattern[0]) if h > 0 else 0
-            offset_x = cx - (w * scale) // 2
-            offset_y = cy - (h * scale) // 2
-            for ry, row in enumerate(pattern):
-                for rx, ch in enumerate(row):
-                    if ch == '.' or ch == ' ':
-                        continue
-                    col = color_map.get(ch, None)
-                    if col is None:
-                        continue
-                    x = offset_x + rx * scale
-                    y = offset_y + ry * scale
-                    # ピクセルは小さな矩形でスケーリングして描く
-                    pyxel.rect(x, y, scale, scale, col)
+        name, tid, _, _ = self.target_type
 
         # タップされて消えている間は描画しない
         if self.target_visible:
-            if self.sprites_loaded and tid in SPRITE_RECTS:
-                # りんご・バナナは fruits.pyxres の実写ピクセルアートを使う
-                u, v, sw, sh = SPRITE_RECTS[tid]
-                # 大きさは固定（直径 = target_r * 2）
-                blt_scale = (self.target_r * 2) / sw
-                draw_w = sw * blt_scale
-                draw_h = sh * blt_scale
-                draw_x = int(self.target_x - draw_w / 2)
-                draw_y = int(self.target_y - draw_h / 2)
-                pyxel.blt(draw_x, draw_y, 0, u, v, sw, sh, 0, scale=blt_scale)
-            else:
-                # 読み込み失敗時のフォールバック（矩形パターン描画・大きさ固定）
-                scale = max(1, int(self.target_r / 4))
-                pattern = self.pixel_patterns.get(tid, self.pixel_patterns['apple'])
-                color_map = {'B': body_col, 'L': leaf_col}
-                draw_pixel_art(self.target_x, self.target_y, pattern, scale, color_map)
+            u, v, sw, sh = SPRITE_RECTS[tid]
+            # 大きさは固定（直径 = target_r * 2）
+            blt_scale = (self.target_r * 2) / sw
+            draw_w = sw * blt_scale
+            draw_h = sh * blt_scale
+            draw_x = int(self.target_x - draw_w / 2)
+            draw_y = int(self.target_y - draw_h / 2)
+            pyxel.blt(draw_x, draw_y, 0, u, v, sw, sh, 0, scale=blt_scale)
 
         # パーティクル描画（色は果物のボディに合わせつつ控えめに）
         for p in self.particles:
