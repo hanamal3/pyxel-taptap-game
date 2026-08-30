@@ -14,7 +14,7 @@
 
 import math
 import random
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 # Pyxel がインストールされていない（または型情報が解決できない）場合の簡易スタブ
 try:
@@ -83,6 +83,12 @@ SPRITE_RECTS = {
     "banana": (16, 0, 12, 13),
 }
 
+# タップされた時に鳴らすサウンドバンク番号（バナナは fruits.pyxres 由来のメロディ、りんごは短いチャイム）
+SOUND_BANKS = {
+    "apple": 1,
+    "banana": 0,
+}
+
 # パーティクル数上限
 MAX_PARTICLES = 120
 
@@ -118,7 +124,7 @@ class TapTapGame:
         pyxel.init(WIDTH, HEIGHT, title="TapTap - タップタップ", fps=60)
         pyxel.mouse(True)  # マウス座標を有効化（タッチの座標も扱える）
 
-        # りんご・バナナのピクセルアートと、タップ音楽（イメージ／サウンドバンク0）を読み込む
+        # りんご・バナナのピクセルアートと、それぞれのタップ音楽（イメージ／サウンドバンク）を読み込む
         pyxel.load("fruits.pyxres")
 
         # 初期ゲーム状態
@@ -132,7 +138,6 @@ class TapTapGame:
         self.target_timer = 0  # ターゲット自動移動タイマー
         self.particles: List[Particle] = []  # Particle のリスト
         # 果物タイプ（シンプルな色味で表現）
-        from typing import Tuple
         self.fruit_types: List[Tuple[str, str, int, int]] = [
             ("りんご", "apple", 10, 11),   # (表示名, id, body_color, leaf_color)
             ("バナナ", "banana", 8, 7),
@@ -140,7 +145,8 @@ class TapTapGame:
         self.target_type: Optional[Tuple[str, str, int, int]] = None
 
         # 難易度やボーナス系
-        self.stay_frames = 180  # 1つの果物が一箇所に留まる時間（約3秒、60fps想定）
+        self.stay_frames = 180  # タップされなかった場合に一箇所に留まる時間（約3秒、60fps想定）
+        self.tap_respawn_frames = 30  # タップで消えてから次が出るまでの時間（約0.5秒）
         self.max_combo_time = 30  # コンボを維持するためのフレーム数
 
         # 初回ターゲット設置
@@ -152,19 +158,32 @@ class TapTapGame:
     # --------------------
     # サウンド再生（短いクリック音）
     # --------------------
-    def _play_tap_music(self) -> None:
-        """タップされた瞬間に鳴らす短い音楽。"""
-        pyxel.play(0, 0, loop=False)
+    def _play_tap_music(self, tid: str) -> None:
+        """タップされた瞬間に、果物ごとに違う音楽を鳴らす。"""
+        pyxel.play(0, SOUND_BANKS[tid], loop=False)
 
     # --------------------
-    # タップ判定（座標がターゲット内か）
+    # 表示中のイラストの描画位置・大きさ（当たり判定と描画で共用）
+    # --------------------
+    def _sprite_rect(self) -> Tuple[float, float, float, float]:
+        tid = self.target_type[1] if self.target_type is not None else "apple"
+        u, v, sw, sh = SPRITE_RECTS[tid]
+        # 大きさは固定（直径 = target_r * 2）
+        blt_scale = (self.target_r * 2) / sw
+        draw_w = sw * blt_scale
+        draw_h = sh * blt_scale
+        draw_x = self.target_x - draw_w / 2
+        draw_y = self.target_y - draw_h / 2
+        return draw_x, draw_y, draw_w, draw_h
+
+    # --------------------
+    # タップ判定（座標がイラスト全体の範囲内か）
     # --------------------
     def _is_hit(self, x: int, y: int) -> bool:
         if not self.target_visible:
             return False
-        dx = x - self.target_x
-        dy = y - self.target_y
-        return dx * dx + dy * dy <= self.target_r * self.target_r
+        draw_x, draw_y, draw_w, draw_h = self._sprite_rect()
+        return draw_x <= x <= draw_x + draw_w and draw_y <= y <= draw_y + draw_h
 
     # --------------------
     # タップ時の処理：スコア加算、コンボ、エフェクト、音
@@ -185,12 +204,14 @@ class TapTapGame:
 
             # タップしたターゲットは消え、少し経つと別の場所へ再出現する
             self.target_visible = False
-            self.paused_timer = self.stay_frames
+            self.paused_timer = self.tap_respawn_frames
             # パーティクルをたくさん発生させる（楽しさアップ）
             self._spawn_particles(self.target_x, self.target_y, count=12 + min(18, self.combo))
 
-            # タップされた瞬間に音楽を鳴らす
-            self._play_tap_music()
+            # タップされた瞬間に、果物ごとの音楽を鳴らす
+            if self.target_type is not None:
+                _, tid, _, _ = self.target_type
+                self._play_tap_music(tid)
 
         else:
             # ミスクリック：小さなパーティクルでフィードバック
@@ -301,13 +322,9 @@ class TapTapGame:
         # タップされて消えている間は描画しない
         if self.target_visible:
             u, v, sw, sh = SPRITE_RECTS[tid]
-            # 大きさは固定（直径 = target_r * 2）
-            blt_scale = (self.target_r * 2) / sw
-            draw_w = sw * blt_scale
-            draw_h = sh * blt_scale
-            draw_x = int(self.target_x - draw_w / 2)
-            draw_y = int(self.target_y - draw_h / 2)
-            pyxel.blt(draw_x, draw_y, 0, u, v, sw, sh, 0, scale=blt_scale)
+            draw_x, draw_y, draw_w, _ = self._sprite_rect()
+            blt_scale = draw_w / sw
+            pyxel.blt(int(draw_x), int(draw_y), 0, u, v, sw, sh, 0, scale=blt_scale)
 
         # パーティクル描画（色は果物のボディに合わせつつ控えめに）
         for p in self.particles:
