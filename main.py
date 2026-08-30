@@ -59,6 +59,12 @@ except Exception:  # pragma: no cover - 開発環境の型チェック回避用�
         def pset(self, *args: Any, **kwargs: Any) -> None:
             pass
 
+        def load(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def blt(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
         def text(self, *args: Any, **kwargs: Any) -> None:
             pass
 
@@ -67,9 +73,15 @@ except Exception:  # pragma: no cover - 開発環境の型チェック回避用�
 # 画面サイズとゲーム定数
 WIDTH = 160
 HEIGHT = 120
-TARGET_MIN_R = 10
-TARGET_MAX_R = 22
+TARGET_R = 18  # ターゲットの大きさ（固定）
 SPAWN_PADDING = 10
+
+# りんご・バナナの実写ピクセルアート（fruits.pyxres, イメージバンク0）の座標
+# (u, v, w, h): スプライトシート上の位置とサイズ
+SPRITE_RECTS = {
+    "apple": (0, 0, 14, 13),
+    "banana": (16, 0, 12, 13),
+}
 
 # パーティクル数上限
 MAX_PARTICLES = 120
@@ -106,6 +118,15 @@ class TapTapGame:
         pyxel.init(WIDTH, HEIGHT, title="TapTap - タップタップ", fps=60)
         pyxel.mouse(True)  # マウス座標を有効化（タッチの座標も扱える）
 
+        # りんご・バナナのピクセルアート（イメージバンク0）を読み込む
+        self.sprites_loaded = False
+        try:
+            pyxel.load("fruits.pyxres")
+            self.sprites_loaded = True
+        except Exception:
+            # 読み込めない場合は他の果物と同様に矩形パターンで代替描画する
+            pass
+
         # サウンド定義（環境差を考えて複数パターンで試行）
         # Pyxel のバージョン差による引数違いに対応するため try/except を使います。
         try:
@@ -137,9 +158,6 @@ class TapTapGame:
         self.fruit_sound_map = {
             'apple': 0,
             'banana': 1,
-            'orange': 2,
-            'grape': 1,
-            'melon': 2,
         }
         self.play_sound: Callable[[Optional[str]], None] = self._play_click_sound
 
@@ -149,7 +167,8 @@ class TapTapGame:
         self.combo_timer = 0  # 連続タップ時間管理（連打ボーナス用）
         self.target_x = WIDTH // 2
         self.target_y = HEIGHT // 2
-        self.target_r = 18
+        self.target_r = TARGET_R
+        self.target_visible = True  # タップされると消え、再配置されると再び表示される
         self.target_timer = 0  # ターゲット自動移動タイマー
         self.particles: List[Particle] = []  # Particle のリスト
         # 果物タイプ（シンプルな色味で表現）
@@ -157,9 +176,6 @@ class TapTapGame:
         self.fruit_types: List[Tuple[str, str, int, int]] = [
             ("りんご", "apple", 10, 11),   # (表示名, id, body_color, leaf_color)
             ("バナナ", "banana", 8, 7),
-            ("オレンジ", "orange", 9, 7),
-            ("ぶどう", "grape", 5, 7),
-            ("メロン", "melon", 3, 7),
         ]
         self.target_type: Optional[Tuple[str, str, int, int]] = None
         # ピクセルアート用のパターン定義（小さなマップで描画）
@@ -182,36 +198,6 @@ class TapTapGame:
                 ".BBBBB..",
                 "..BBBB..",
                 "...BB...",
-                "........",
-                "........",
-            ],
-            "orange": [
-                "........",
-                "..OOOO..",
-                ".OOOOOO.",
-                ".OOOOOO.",
-                ".OOOOOO.",
-                "..OOOO..",
-                "...OO...",
-                "........",
-            ],
-            "grape": [
-                "........",
-                "..GGG...",
-                ".GGGGG..",
-                ".GGGGG..",
-                "..GGG...",
-                "..GG....",
-                "........",
-                "........",
-            ],
-            "melon": [
-                "........",
-                ".MMMMM..",
-                ".MMMMM..",
-                ".MMMMM..",
-                "..MMM...",
-                "..MM....",
                 "........",
                 "........",
             ],
@@ -247,6 +233,8 @@ class TapTapGame:
     # タップ判定（座標がターゲット内か）
     # --------------------
     def _is_hit(self, x: int, y: int) -> bool:
+        if not self.target_visible:
+            return False
         dx = x - self.target_x
         dy = y - self.target_y
         return dx * dx + dy * dy <= self.target_r * self.target_r
@@ -268,9 +256,9 @@ class TapTapGame:
             gained = 1 + (self.combo - 1) // 3  # 3回で+1ボーナス等
             self.score += gained
 
-            # タップでターゲットを数秒間止める（シンプル挙動）
+            # タップしたターゲットは消え、pause 終了後に別の場所へ再出現する
+            self.target_visible = False
             self.paused_timer = self.pause_frames
-            # ターゲットはそのまま表示し、pause が終わったら再出現させる
             # パーティクルをたくさん発生させる（楽しさアップ）
             self._spawn_particles(self.target_x, self.target_y, count=12 + min(18, self.combo))
 
@@ -295,12 +283,12 @@ class TapTapGame:
     # ターゲット再配置
     # --------------------
     def _respawn_target(self, quick: bool = False) -> None:
-        # 画面のパディング内にランダム配置
-        self.target_r = random.randint(TARGET_MIN_R, TARGET_MAX_R)
+        # 画面のパディング内にランダム配置（大きさは固定）
         self.target_x = random.randint(SPAWN_PADDING + self.target_r, WIDTH - SPAWN_PADDING - self.target_r)
         self.target_y = random.randint(SPAWN_PADDING + self.target_r, HEIGHT - SPAWN_PADDING - self.target_r)
         # 新しい果物タイプを選ぶ
         self.target_type = random.choice(self.fruit_types)
+        self.target_visible = True
         # 早めに次の自動移動する場合は短いタイマー
         self.target_timer = 10 if quick else random.randint(self.spawn_interval // 2, self.spawn_interval * 2)
 
@@ -359,10 +347,6 @@ class TapTapGame:
                 if self.target_timer <= 0:
                     self._respawn_target()
 
-        # ターゲットが小さくなっている時は徐々に戻す（弾む演出）
-        if self.target_r < TARGET_MAX_R:
-            self.target_r = min(TARGET_MAX_R, self.target_r + 0.2)
-
         # コンボタイマー更新
         if self.combo_timer > 0:
             self.combo_timer -= 1
@@ -412,11 +396,24 @@ class TapTapGame:
                     # ピクセルは小さな矩形でスケーリングして描く
                     pyxel.rect(x, y, scale, scale, col)
 
-        # スケールはターゲット半径に応じて決める
-        scale = max(1, int(self.target_r / 4))
-        pattern = self.pixel_patterns.get(tid, self.pixel_patterns['apple'])
-        color_map = {'B': body_col, 'L': leaf_col, 'O': body_col}
-        draw_pixel_art(self.target_x, self.target_y, pattern, scale, color_map)
+        # タップされて消えている間は描画しない
+        if self.target_visible:
+            if self.sprites_loaded and tid in SPRITE_RECTS:
+                # りんご・バナナは fruits.pyxres の実写ピクセルアートを使う
+                u, v, sw, sh = SPRITE_RECTS[tid]
+                # 大きさは固定（直径 = target_r * 2）
+                blt_scale = (self.target_r * 2) / sw
+                draw_w = sw * blt_scale
+                draw_h = sh * blt_scale
+                draw_x = int(self.target_x - draw_w / 2)
+                draw_y = int(self.target_y - draw_h / 2)
+                pyxel.blt(draw_x, draw_y, 0, u, v, sw, sh, 0, scale=blt_scale)
+            else:
+                # 読み込み失敗時のフォールバック（矩形パターン描画・大きさ固定）
+                scale = max(1, int(self.target_r / 4))
+                pattern = self.pixel_patterns.get(tid, self.pixel_patterns['apple'])
+                color_map = {'B': body_col, 'L': leaf_col}
+                draw_pixel_art(self.target_x, self.target_y, pattern, scale, color_map)
 
         # パーティクル描画（色は果物のボディに合わせつつ控えめに）
         for p in self.particles:
