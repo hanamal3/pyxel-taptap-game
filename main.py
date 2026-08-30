@@ -14,7 +14,7 @@
 
 import math
 import random
-from typing import Any, Callable, List, Optional
+from typing import Any, List, Optional
 
 # Pyxel がインストールされていない（または型情報が解決できない）場合の簡易スタブ
 try:
@@ -118,42 +118,8 @@ class TapTapGame:
         pyxel.init(WIDTH, HEIGHT, title="TapTap - タップタップ", fps=60)
         pyxel.mouse(True)  # マウス座標を有効化（タッチの座標も扱える）
 
-        # りんご・バナナのピクセルアート（イメージバンク0）を読み込む
+        # りんご・バナナのピクセルアートと、タップ音楽（イメージ／サウンドバンク0）を読み込む
         pyxel.load("fruits.pyxres")
-
-        # サウンド定義（環境差を考えて複数パターンで試行）
-        # Pyxel のバージョン差による引数違いに対応するため try/except を使います。
-        try:
-            # よく使われる簡易パターン（音程データ, wave, env, volume, speed など）
-            pyxel.sound(0).set(
-                "c5",  # ノート（短いクリック音）
-                "s",   # 波形: s(quare) 相当（環境により解釈される）
-                "n",   # エンベロープ等（省略可）
-                10,    # 音量的な数値（省略可）
-                5      # 速さ（省略可）
-            )
-            # 追加の短い効果音を定義（果物ごとに使い分ける）
-            try:
-                pyxel.sound(1).set("e5", "s", "n", 8, 6)
-                pyxel.sound(2).set("g4", "t", "n", 9, 5)
-            except Exception:
-                # 無視して継続
-                pass
-        except TypeError:
-            try:
-                # 引数が少ないバージョン向け
-                pyxel.sound(0).set("c5")
-            except Exception:
-                # 最悪定義できなくても実行は続ける（無音になるだけ）
-                pass
-
-        # 短い効果音を再生するヘルパー
-        # fruit_sound_map: tid -> sound index
-        self.fruit_sound_map = {
-            'apple': 0,
-            'banana': 1,
-        }
-        self.play_sound: Callable[[Optional[str]], None] = self._play_click_sound
 
         # 初期ゲーム状態
         self.score = 0
@@ -174,30 +140,21 @@ class TapTapGame:
         self.target_type: Optional[Tuple[str, str, int, int]] = None
 
         # 難易度やボーナス系
-        self.spawn_interval = 60  # 毎何フレームで自動でターゲットを再配置するか
+        self.stay_frames = 180  # 1つの果物が一箇所に留まる時間（約3秒、60fps想定）
         self.max_combo_time = 30  # コンボを維持するためのフレーム数
 
         # 初回ターゲット設置
         self._respawn_target()
-        # タップで一時停止するフレーム数（数秒間止まる）
-        self.pause_frames = 120  # 120フレーム = 約2秒（60fps想定）
-        self.paused_timer = 0
+        self.paused_timer = 0  # タップ後、次が出るまでのカウントダウン
 
         pyxel.run(self.update, self.draw)
 
     # --------------------
     # サウンド再生（短いクリック音）
     # --------------------
-    def _play_click_sound(self, tid: Optional[str] = None) -> None:
-        """効果音を鳴らす。`tid` が与えられれば果物ごとの音を使う。"""
-        try:
-            if tid is None:
-                pyxel.play(0, 0, loop=False)
-            else:
-                idx = self.fruit_sound_map.get(tid, 0)
-                pyxel.play(0, idx, loop=False)
-        except Exception:
-            pass
+    def _play_tap_music(self) -> None:
+        """タップされた瞬間に鳴らす短い音楽。"""
+        pyxel.play(0, 0, loop=False)
 
     # --------------------
     # タップ判定（座標がターゲット内か）
@@ -226,21 +183,14 @@ class TapTapGame:
             gained = 1 + (self.combo - 1) // 3  # 3回で+1ボーナス等
             self.score += gained
 
-            # タップしたターゲットは消え、pause 終了後に別の場所へ再出現する
+            # タップしたターゲットは消え、少し経つと別の場所へ再出現する
             self.target_visible = False
-            self.paused_timer = self.pause_frames
+            self.paused_timer = self.stay_frames
             # パーティクルをたくさん発生させる（楽しさアップ）
             self._spawn_particles(self.target_x, self.target_y, count=12 + min(18, self.combo))
 
-            # 効果音を鳴らす（果物ごとに異なる音）
-            if self.target_type is not None:
-                _, tid, _, _ = self.target_type
-            else:
-                tid = None
-            self.play_sound(tid)
-
-            # （移動はしない）
-            pass
+            # タップされた瞬間に音楽を鳴らす
+            self._play_tap_music()
 
         else:
             # ミスクリック：小さなパーティクルでフィードバック
@@ -252,15 +202,15 @@ class TapTapGame:
     # --------------------
     # ターゲット再配置
     # --------------------
-    def _respawn_target(self, quick: bool = False) -> None:
+    def _respawn_target(self) -> None:
         # 画面のパディング内にランダム配置（大きさは固定）
         self.target_x = random.randint(SPAWN_PADDING + self.target_r, WIDTH - SPAWN_PADDING - self.target_r)
         self.target_y = random.randint(SPAWN_PADDING + self.target_r, HEIGHT - SPAWN_PADDING - self.target_r)
         # 新しい果物タイプを選ぶ
         self.target_type = random.choice(self.fruit_types)
         self.target_visible = True
-        # 早めに次の自動移動する場合は短いタイマー
-        self.target_timer = 10 if quick else random.randint(self.spawn_interval // 2, self.spawn_interval * 2)
+        # タップしなければこの秒数だけ同じ場所に留まる
+        self.target_timer = self.stay_frames
 
     # --------------------
     # パーティクル発生
@@ -306,12 +256,12 @@ class TapTapGame:
 
         # ターゲットの自動移動タイマー更新
         if self.paused_timer > 0:
-            # 停止中はタイマーを減らす
+            # タップ後、消えている間はこちらのタイマーを減らす
             self.paused_timer -= 1
             if self.paused_timer <= 0:
-                # pause 終了後にターゲットを再配置
                 self._respawn_target()
         else:
+            # タップされずに stay_frames 経過したら自動で再配置
             if self.target_timer > 0:
                 self.target_timer -= 1
                 if self.target_timer <= 0:
